@@ -2,6 +2,7 @@ package ticker
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -14,6 +15,8 @@ const (
 	baseApiURL        = `https://bittrex.com/api/v1.1/public/getticker?market=`
 )
 
+// MarketResult структура для результата по тикерам от api
+// Bid Ask по условию не нужны, поэтому пусть будут закоменчены
 type MarketResult struct {
 	// Bid  float64 `json:"Bid"`
 	// Ask  float64 `json:"Ask"`
@@ -26,6 +29,8 @@ type APIResult struct {
 	Result  *MarketResult `json:"result"`
 }
 
+// Worker хранит информацию по одной паре и осуществляет
+// обновление результата по этой паре
 type Worker struct {
 	*log.Logger
 	market    string
@@ -36,7 +41,7 @@ type Worker struct {
 // CreateWorker creates new worker and returns worker pointer
 func CreateWorker(market string, logger *log.Logger) *Worker {
 	if logger == nil {
-		logger = log.New(os.Stdout, market+"_worker", 1)
+		logger = log.New(os.Stdout, "", 1)
 	}
 	return &Worker{
 		Logger: logger,
@@ -45,8 +50,12 @@ func CreateWorker(market string, logger *log.Logger) *Worker {
 	}
 }
 
-func (w *Worker) Exec(client *http.Client) {
-	go func() {
+// Exec запускает выполнение запроса и сравнение результата
+func (w *Worker) Exec(client *http.Client) error {
+	errCh := make(chan error)
+
+	go func(errChan chan error) {
+		defer close(errChan)
 		req, err := http.NewRequest(
 			http.MethodGet,
 			w.url,
@@ -55,6 +64,7 @@ func (w *Worker) Exec(client *http.Client) {
 
 		if err != nil {
 			w.Logger.Println(err)
+			errChan <- err
 			return
 		}
 
@@ -62,13 +72,13 @@ func (w *Worker) Exec(client *http.Client) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			w.Logger.Println(err)
+			errChan <- err
 			return
 		}
 
 		bts, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			w.Logger.Println(err)
+			errChan <- err
 			return
 		}
 
@@ -76,19 +86,20 @@ func (w *Worker) Exec(client *http.Client) {
 
 		var result APIResult
 		if err := json.Unmarshal(bts, &result); err != nil {
-			w.Logger.Println(err)
+			errChan <- err
 			return
 		}
 
 		if !result.Success {
-			w.Logger.Printf("market '%s' error: %s\n", w.market, result.Message)
+			errChan <- fmt.Errorf("%s", result.Message)
 			return
 		}
 
 		if w.lastValue != result.Result.Last {
 			w.lastValue = result.Result.Last
-			w.Logger.Printf("'%s': %d\n", w.market, w.lastValue)
+			w.Logger.Println("'", w.market, "': ", w.lastValue)
 		}
-	}()
-	// fmt.Printf("%+v\n", result)
+	}(errCh)
+
+	return <-errCh
 }

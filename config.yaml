@@ -1,0 +1,7 @@
+max_query_per_second: 3
+markets:
+  - BTC-ETH
+  - BTC-LTC
+  - BTC-XMR
+  - BTC-NXT
+  - BTC-DASH
